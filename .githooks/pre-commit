@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Auto-append history entry before commit.
+if command -v npm >/dev/null 2>&1; then
+  npm run --silent update-history
+else
+  echo "npm이 설치되어 있지 않아 history 업데이트를 건너뜁니다."
+fi
+

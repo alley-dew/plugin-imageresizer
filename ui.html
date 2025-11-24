@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Image Optimizer</title>
+    <style>
+      :root {
+        font-family: Inter, Pretendard, sans-serif;
+        color: #111;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #f8f8f8;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .panel {
+        background: #fff;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        margin-bottom: 12px;
+      }
+      .section-title {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        color: #666;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        font-size: 12px;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      input,
+      select {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 13px;
+      }
+      input[type="range"] {
+        padding: 0;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      .row > label {
+        flex: 1;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #eef2ff;
+        color: #3346d3;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .preview {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+      }
+      .preview img {
+        max-width: 100%;
+        border-radius: 8px;
+        background: #f2f2f2;
+      }
+      button {
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .primary {
+        background: #111;
+        color: #fff;
+      }
+      .ghost {
+        background: #f1f1f1;
+      }
+      .history-item {
+        font-size: 12px;
+        padding: 4px 0;
+        display: flex;
+        justify-content: space-between;
+      }
+      .status {
+        font-size: 12px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Image Optimizer</h1>
+
+    <div class="panel" id="selection-panel">
+      <div class="section-title">선택 정보</div>
+      <div id="selection-info" class="status">선택된 노드가 없습니다.</div>
+      <div id="selection-warning" class="status"></div>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">Export 옵션</div>
+      <div class="row">
+        <label>
+          포맷
+          <select id="format">
+            <option value="PNG">PNG</option>
+            <option value="JPG">JPG</option>
+            <option value="WEBP">WEBP</option>
+          </select>
+        </label>
+        <label>
+          스케일 (x)
+          <input id="scale" type="number" step="0.25" min="0.25" max="4" value="1" />
+        </label>
+      </div>
+      <label>
+        배경 (HEX 또는 transparent)
+        <input id="background" type="text" placeholder="transparent" value="transparent" />
+      </label>
+      <label>
+        DPI
+        <input id="dpi" type="number" min="36" max="300" value="72" />
+      </label>
+      <div class="section-title">품질</div>
+      <label>
+        품질/압축
+        <input id="quality" type="range" min="0.1" max="1" step="0.05" value="0.8" />
+      </label>
+      <div class="row">
+        <button class="ghost" data-preset="0.95">고화질</button>
+        <button class="ghost" data-preset="0.8">균형</button>
+        <button class="ghost" data-preset="0.6">초경량</button>
+        <button class="ghost" data-preset="0.4">울트라</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">용량 예측</div>
+      <div id="estimate-text" class="status">선택 정보가 필요합니다.</div>
+      <div id="precise-text" class="status"></div>
+      <button id="precise-btn" class="ghost">정밀 계산</button>
+    </div>
+
+    <div class="panel preview">
+      <div class="section-title">미리보기</div>
+      <img id="preview-img" alt="preview" />
+      <div id="preview-meta" class="status"></div>
+      <button id="refresh-preview" class="ghost">미리보기 새로고침</button>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">최근 기록</div>
+      <div id="history"></div>
+    </div>
+
+    <div class="panel">
+      <button class="primary" id="export-btn">Export & 다운로드</button>
+      <div id="export-status" class="status"></div>
+    </div>
+
+    <script>
+      const state = {
+        selection: null,
+        options: {
+          format: "PNG",
+          scale: 1,
+          quality: 0.8,
+          background: "transparent",
+          dpi: 72
+        },
+        history: [],
+        largeThreshold: 0,
+        pendingRequest: null
+      };
+
+      const selectionInfoEl = document.getElementById("selection-info");
+      const selectionWarningEl = document.getElementById("selection-warning");
+      const estimateEl = document.getElementById("estimate-text");
+      const preciseEl = document.getElementById("precise-text");
+      const previewImg = document.getElementById("preview-img");
+      const previewMeta = document.getElementById("preview-meta");
+      const historyEl = document.getElementById("history");
+      const exportStatus = document.getElementById("export-status");
+
+      const controls = {
+        format: document.getElementById("format"),
+        scale: document.getElementById("scale"),
+        background: document.getElementById("background"),
+        dpi: document.getElementById("dpi"),
+        quality: document.getElementById("quality")
+      };
+
+      Object.entries(controls).forEach(([key, el]) => {
+        el.addEventListener("input", () => {
+          state.options[key] = key === "quality" || key === "scale" ? Number(el.value) : el.value;
+          schedulePreview();
+          renderEstimate();
+        });
+      });
+
+      document.querySelectorAll("[data-preset]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const value = Number(btn.dataset.preset);
+          controls.quality.value = value;
+          state.options.quality = value;
+          schedulePreview();
+          renderEstimate();
+        });
+      });
+
+      document.getElementById("precise-btn").addEventListener("click", () => {
+        requestPreview(true);
+      });
+      document.getElementById("refresh-preview").addEventListener("click", () => {
+        requestPreview(false);
+      });
+      document.getElementById("export-btn").addEventListener("click", () => {
+        exportAsset();
+      });
+
+      window.onmessage = (event) => {
+        const msg = event.data.pluginMessage;
+        if (!msg) return;
+        switch (msg.type) {
+          case "PLUGIN_READY":
+            state.largeThreshold = msg.payload.largeSizeThreshold;
+            break;
+          case "SELECTION_EMPTY":
+            state.selection = null;
+            selectionInfoEl.textContent = "선택된 노드가 없습니다.";
+            selectionWarningEl.textContent = "";
+            previewImg.src = "";
+            renderEstimate();
+            break;
+          case "SELECTION_DATA":
+            state.selection = msg.payload;
+            renderSelection();
+            renderEstimate();
+            schedulePreview();
+            break;
+          case "PREVIEW_RESPONSE":
+            handlePreviewResponse(msg.payload);
+            break;
+          case "EXPORT_RESPONSE":
+            handleExportResponse(msg.payload);
+            break;
+          case "UNSUPPORTED_NODE":
+            selectionWarningEl.textContent = "지원되지 않는 노드입니다.";
+            break;
+          case "PLUGIN_ERROR":
+            exportStatus.textContent = msg.message;
+            break;
+        }
+      };
+
+      function renderSelection() {
+        if (!state.selection) return;
+        const { name, width, height } = state.selection;
+        selectionInfoEl.textContent = `${name} · ${width}px × ${height}px`;
+        if (width > state.largeThreshold || height > state.largeThreshold) {
+          selectionWarningEl.textContent = "고해상도 노드입니다. encode 시간이 오래 걸릴 수 있어요.";
+        } else {
+          selectionWarningEl.textContent = "";
+        }
+      }
+
+      function renderEstimate() {
+        if (!state.selection) {
+          estimateEl.textContent = "선택 정보가 필요합니다.";
+          return;
+        }
+        const estimate = estimateSize(
+          state.selection.width,
+          state.selection.height,
+          state.options.format,
+          state.options.scale,
+          state.options.quality
+        );
+        estimateEl.textContent = `예상 용량: ${estimate}`;
+      }
+
+      function estimateSize(width, height, format, scale, quality) {
+        const pixels = width * height * Math.pow(scale, 2);
+        let bpp = 1;
+        if (format === "PNG") bpp = 1.1;
+        if (format === "JPG") bpp = 0.4 + (1 - quality) * 0.2;
+        if (format === "WEBP") bpp = 0.35 + (1 - quality) * 0.15;
+        const bytes = pixels * bpp;
+        return formatBytes(bytes);
+      }
+
+      function schedulePreview() {
+        clearTimeout(state.pendingRequest);
+        state.pendingRequest = setTimeout(() => requestPreview(false), 200);
+      }
+
+      function requestPreview(isPrecise) {
+        if (!state.selection) return;
+        const requestId = crypto.randomUUID();
+        state.currentRequestId = requestId;
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "REQUEST_PREVIEW",
+              payload: {
+                ...state.options,
+                requestId,
+                thumbnail: !isPrecise
+              }
+            }
+          },
+          "*"
+        );
+        if (!isPrecise) {
+          previewMeta.textContent = "미리보기 생성 중...";
+        } else {
+          preciseEl.textContent = "정밀 계산 중...";
+        }
+      }
+
+      function handlePreviewResponse(payload) {
+        if (payload.requestId && payload.requestId !== state.currentRequestId) return;
+        const dataUrl = `data:image/${payload.format.toLowerCase()};base64,${payload.base64}`;
+        previewImg.src = dataUrl;
+        previewMeta.textContent = `실제 용량 ${formatBytes(payload.bytes)}`;
+        preciseEl.textContent = "";
+        pushHistory({
+          format: state.options.format,
+          quality: state.options.quality,
+          bytes: payload.bytes
+        });
+      }
+
+      function pushHistory(item) {
+        state.history.unshift({ ...item, timestamp: Date.now() });
+        if (state.history.length > 5) state.history.pop();
+        historyEl.innerHTML = state.history
+          .map(
+            (entry) =>
+              `<div class="history-item"><span>${entry.format} / Q${entry.quality.toFixed(
+                2
+              )}</span><span>${formatBytes(entry.bytes)}</span></div>`
+          )
+          .join("");
+      }
+
+      function exportAsset() {
+        if (!state.selection) return;
+        exportStatus.textContent = "Export 중...";
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "REQUEST_EXPORT",
+              payload: { ...state.options }
+            }
+          },
+          "*"
+        );
+      }
+
+      function handleExportResponse(payload) {
+        exportStatus.textContent = `완료: ${formatBytes(payload.bytes)}`;
+        triggerDownload(payload.base64, payload.filename);
+      }
+
+      function triggerDownload(base64, filename) {
+        const link = document.createElement("a");
+        link.href = `data:application/octet-stream;base64,${base64}`;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        const idx = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const value = bytes / Math.pow(1024, idx);
+        return `${value.toFixed(2)} ${units[idx]}`;
+      }
+
+      parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");
+    </script>
+  </body>
+</html>
+
+
